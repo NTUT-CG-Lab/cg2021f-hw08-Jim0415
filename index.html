@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>HW08</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
+    />
+    <link type="text/css" rel="stylesheet" href="main.css" />
+    <style>
+      #inset {
+        width: 150px;
+        height: 150px;
+        background-color: transparent; /* or transparent; will show through only if renderer alpha: true */
+        border: none; /* or none; */
+        margin: 0;
+        padding: 0px;
+        position: absolute;
+        left: 20px;
+        bottom: 20px;
+        z-index: 100;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info"></div>
+    <script src="scoreoutputer.min.js"></script>
+    <script>
+      // 建構子 ScoreOutputer 接受一個字串，該字串為 csv 的檔案名稱
+      // 以下面範例，檔名就為 "109598105(總分: 6).csv"
+      var so = new ScoreOutputer("109598105");
+      so.installCSS(function () {
+        // 安裝 bootstrap 的 css，如果在 html 上方引用 bootstrap 5.1.1 的話就不用使用 installCSS ，注意一定要 bootstrap css 5.1.1 版
+        // installCSS 接收一個 callback 當作參數，作為成功安裝 bootstrap css 的回呼函式
+
+        //加入項目，分數，完成狀況
+        //第一個參數為 項目名稱
+        //第2個參數為 項目分數
+        //第3個參數為 完成狀況，有完成 true/未完成 false
+        //有幾個項目就呼叫幾個 addChild
+        //addChild 要比 renderModal 先呼叫
+        so.addChild("產生XYZ Slice gui", 2, true);
+        so.addChild("呈現nrrd格式模型切片", 2, true);
+        so.addChild("可以選擇產生的模型", 2, true);
+        so.addChild("呈現raw、dat格式模型切片", 2, true);
+        so.addChild("可將指定pvm檔轉raw並可成功開啟", 2, false);
+
+        //產生自評表，參數如下所示
+        so.renderModal(
+          //1. 自評表插入位置 (預設 document.body)
+          document.body,
+          //2. 自評表背景 (預設紅色)
+          "rgba(100,45,58,1)",
+          //3. 自評表文字顏色 (預設白色)
+          "white",
+          //4. 自評表文字大小 (預設 14pt)
+          "15pt",
+          //5. 自評表 checkbox 文字大小 (預設多少忘了)
+          "15px",
+          //6. 自評表標題 (預設 "自我評分表")
+          (dialogTitle = "自我評分表")
+        );
+
+        //設定下載按鈕 <-- 一定要呼叫這個函數，不然沒有下載功能
+        so.installDownloadBtn();
+
+        //產生 "開啟自評表按鈕"
+        so.renderBtn(
+          //自評表按鈕插入位置
+          document.querySelector("#info"),
+          //自評表按鈕文字
+          "開啟自評表"
+        );
+      });
+    </script>
+
+    <input type = "file" id = "fileInput" />
+    <script type="module">
+      import * as THREE from "./build/three.module.js";
+      import { GUI } from "./jsm/libs/dat.gui.module.js";
+      import {
+        FileLoader,
+        Loader,
+        Matrix4,
+        Vector3,
+      } from "./build/three.module.js";
+      import Stats from "./jsm/libs/stats.module.js";
+      import { Volume } from "./jsm/misc/Volume.js";
+      import { NRRDLoader } from "./jsm/loaders/NRRDLoader.js";
+      import { TrackballControls } from "./jsm/controls/TrackballControls.js";
+
+      let container,
+        stats,
+        camera,
+        controls,
+        scene,
+        renderer,
+        container2,
+        renderer2,
+        camera2,
+        axes2,
+        scene2,
+        cube,
+        box,
+        sliceX,
+        sliceY,
+        sliceZ,
+        gui;
+      let modelCount = 0;
+
+      // init();
+      // animate();
+
+      var openFile = function (event) {
+        var input = event.target.files[0];
+        var reader = new FileReader();
+        let filename = input.name;
+        let d = filename.split(".");
+        let m = filename.split("_");
+        if (d[1] == "nrrd") {
+          const loader = new NRRDLoader();
+          let nrrdModelName = "./models/nrrd/" + filename;
+          loader.load(nrrdModelName, function (volume) {
+            const geometry = new THREE.BoxGeometry(
+              volume.xLength,
+              volume.yLength,
+              volume.zLength
+            );
+
+            if (modelCount != 0) {
+              scene.remove(box);
+              scene.remove(cube);
+            }
+
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            cube = new THREE.Mesh(geometry, material);
+            cube.visible = false;
+            box = new THREE.BoxHelper(cube);
+            scene.add(box);
+            box.applyMatrix4(volume.matrix);
+            scene.add(cube);
+
+            //z plane
+            sliceZ = volume.extractSlice(
+              "z",
+              Math.floor(volume.RASDimensions[2] / 4)
+            );
+            scene.add(sliceZ.mesh);
+
+            //y plane
+            sliceY = volume.extractSlice(
+              "y",
+              Math.floor(volume.RASDimensions[1] / 2)
+            );
+            scene.add(sliceY.mesh);
+
+            //x plane
+            sliceX = volume.extractSlice(
+              "x",
+              Math.floor(volume.RASDimensions[0] / 2)
+            );
+            scene.add(sliceX.mesh);
+
+            gui
+              .add(sliceX, "index", 0, volume.RASDimensions[0], 1)
+              .name("indexX")
+              .onChange(function () {
+                sliceX.repaint.call(sliceX);
+              });
+            gui
+              .add(sliceY, "index", 0, volume.RASDimensions[1], 1)
+              .name("indexY")
+              .onChange(function () {
+                sliceY.repaint.call(sliceY);
+              });
+            gui
+              .add(sliceZ, "index", 0, volume.RASDimensions[2], 1)
+              .name("indexZ")
+              .onChange(function () {
+                sliceZ.repaint.call(sliceZ);
+              });
+          });
+        }
+        else if (d[1] == "dat" || d[1] == "raw") {
+          let volDims = [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])];
+          let bit = m[4];
+          reader.onload = function () {
+            var arrayBuffer = reader.result;
+            if (bit == "uint8") {
+              var arrayBuffer = new Uint8Array(arrayBuffer);
+            }
+            let volume = new Volume(
+              volDims[0],
+              volDims[1],
+              volDims[2],
+              bit,
+              arrayBuffer
+            );
+
+            const min_max = volume.computeMinMax();
+            const min = min_max[0];
+            const max = min_max[1];
+
+            volume.windowLow = min;
+            volume.windowHigh = max;
+
+            volume.matrix = new Matrix4();
+            const transitionMatrix = new Matrix4();
+            volume.inverseMatrix = new Matrix4();
+            volume.inverseMatrix.copy(volume.matrix).invert();
+            volume.RASDimensions = new Vector3(
+              volume.xLength,
+              volume.yLength,
+              volume.zLength
+            )
+
+              .applyMatrix4(volume.matrix)
+              .round()
+              .toArray()
+              .map(Math.abs);
+
+              if (volume.lowerThreshhold === -Infinity) {
+                volume.lowerThreshhold = min;
+              }
+
+              if (volume.lowerThreshhold === Infinity) {
+                volume.lowerThreshhold = max;
+              }
+
+              const geometry = new THREE.BoxGeometry(
+                volume.xLength,
+                volume.yLength,
+                volume.zLength
+              );
+
+              const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+              cube = new THREE.Mesh(geometry, material);
+              cube.visible = false;
+              box = new THREE.BoxHelper(cube);
+              scene.add(box);
+              box.applyMatrix4(volume.matrix);
+              scene.add(cube);
+
+              //z plane
+              sliceZ = volume.extractSlice(
+                "z",
+                Math.floor(volume.RASDimensions[2] / 4)
+              );
+              scene.add(sliceZ.mesh);
+
+              //y plane
+              sliceY = volume.extractSlice(
+                "y",
+                Math.floor(volume.RASDimensions[1] / 2)
+              );
+              scene.add(sliceY.mesh);
+
+              //x plane
+              sliceX = volume.extractSlice(
+                "x",
+                Math.floor(volume.RASDimensions[0] / 2)
+              );
+              scene.add(sliceX.mesh);
+
+              gui
+                .add(sliceX, "index", 0, volume.RASDimensions[0], 1)
+                .name("indexX")
+                .onChange(function () {
+                  sliceX.repaint.call(sliceX);
+                });
+              gui
+                .add(sliceY, "index", 0, volume.RASDimensions[1], 1)
+                .name("indexY")
+                .onChange(function () {
+                  sliceY.repaint.call(sliceY);
+                });
+              gui
+                .add(sliceZ, "index", 0, volume.RASDimensions[2], 1)
+                .name("indexZ")
+                .onChange(function () {
+                  sliceZ.repaint.call(sliceZ);
+                });
+          };
+          reader.readAsArrayBuffer(input);
+        }
+
+        
+
+        if (modelCount == 0) {
+          gui = new GUI();
+        } else {
+          gui.domElement.remove();
+          scene.remove(sliceX.mesh);
+          scene.remove(sliceY.mesh);
+          scene.remove(sliceZ.mesh);
+          gui = new GUI();
+        }
+        modelCount++;
+      };
+
+      function init() {
+        camera = new THREE.PerspectiveCamera(
+          60,
+          window.innerWidth / window.innerHeight,
+          0.01,
+          1e10
+        );
+        camera.position.z = 300;
+
+        scene = new THREE.Scene();
+
+        scene.add(camera);
+
+        // light
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x000000, 1);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(200, 200, 200);
+        scene.add(dirLight);
+
+        //nrrd model
+        const loader = new NRRDLoader();
+        loader.load("models/nrrd/heart1.nrrd", function (volume) {
+          //box helper to see the extend of the volume
+          const geometry = new THREE.BoxGeometry(
+            volume.xLength,
+            volume.yLength,
+            volume.zLength
+          );
+
+          // //z plane
+          // const sliceZ = volume.extractSlice(
+          //   "z",
+          //   Math.floor(volume.RASDimensions[2] / 4)
+          // );
+          // scene.add(sliceZ.mesh);
+
+          // //y plane
+          // const sliceY = volume.extractSlice(
+          //   "y",
+          //   Math.floor(volume.RASDimensions[1] / 2)
+          // );
+          // scene.add(sliceY.mesh);
+
+          // //x plane
+          // const sliceX = volume.extractSlice(
+          //   "x",
+          //   Math.floor(volume.RASDimensions[0] / 2)
+          // );
+          // scene.add(sliceX.mesh);
+
+          // gui
+          //   .add(sliceX, "index", 0, volume.RASDimensions[0], 1)
+          //   .name("indexX")
+          //   .onChange(function () {
+          //     sliceX.repaint.call(sliceX);
+          //   });
+          // gui
+          //   .add(sliceY, "index", 0, volume.RASDimensions[1], 1)
+          //   .name("indexY")
+          //   .onChange(function () {
+          //     sliceY.repaint.call(sliceY);
+          //   });
+          // gui
+          //   .add(sliceZ, "index", 0, volume.RASDimensions[2], 1)
+          //   .name("indexZ")
+          //   .onChange(function () {
+          //     sliceZ.repaint.call(sliceZ);
+          //   });
+
+          // //box border
+          // const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+          // const cube = new THREE.Mesh(geometry, material);
+          // cube.visible = false;
+          // const box = new THREE.BoxHelper(cube);
+          // scene.add(box);
+          // box.applyMatrix4(volume.matrix);
+          // scene.add(cube);
+        });
+
+        // renderer
+
+        renderer = new THREE.WebGLRenderer();
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        container = document.createElement("div");
+        document.body.appendChild(container);
+        container.appendChild(renderer.domElement);
+
+        controls = new TrackballControls(camera, renderer.domElement);
+        controls.minDistance = 100;
+        controls.maxDistance = 500;
+        controls.rotateSpeed = 5.0;
+        controls.zoomSpeed = 5;
+        controls.panSpeed = 2;
+
+        // const gui = new GUI();
+        setupInset();
+
+        window.addEventListener("resize", onWindowResize);
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        controls.handleResize();
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        controls.update();
+
+        //copy position of the camera into inset
+        camera2.position.copy(camera.position);
+        camera2.position.sub(controls.target);
+        camera2.position.setLength(300);
+        camera2.lookAt(scene2.position);
+
+        renderer.render(scene, camera);
+        renderer2.render(scene2, camera2);
+      }
+
+      function setupInset() {
+        const insetWidth = 150,
+          insetHeight = 150;
+        container2 = document.getElementById("inset");
+        container2.width = insetWidth;
+        container2.height = insetHeight;
+
+        // renderer
+        renderer2 = new THREE.WebGLRenderer({ alpha: true });
+        renderer2.setClearColor(0x000000, 0);
+        renderer2.setSize(insetWidth, insetHeight);
+        container2.appendChild(renderer2.domElement);
+
+        // scene
+        scene2 = new THREE.Scene();
+
+        // camera
+        camera2 = new THREE.PerspectiveCamera(
+          50,
+          insetWidth / insetHeight,
+          1,
+          1000
+        );
+        camera2.up = camera.up; // important!
+
+        // axes
+        axes2 = new THREE.AxesHelper(100);
+        scene2.add(axes2);
+      }
+
+      window.onload = function(){
+        document
+          .getElementById("fileInput")
+          .addEventListener("change", openFile);
+        init();
+        animate();
+      };
+    </script>
+    <div id="inset"></div>
+  </body>
+</html>
